@@ -10,10 +10,10 @@ from . import utils
 class Fetcher(object):
     """Abstract base class for fetching data from an archiver."""
 
-    def _get_values(self, pv, start, end, count, request_params):
+    def _get_values(self, pv, start, end, count, binning_params, request_params):
         raise NotImplementedError()
 
-    def get_values(self, pv, start, end=None, count=None, request_params=None):
+    def get_values(self, pv, start, end=None, count=None, binning_params = None, request_params=None):
         """Retrieve archive data.
 
         start and end are datetime objects. If they are not timezone aware,
@@ -26,6 +26,7 @@ class Fetcher(object):
                 events to the current time
             count: maximum number of events to return. If None, return all
                 events
+            binning_params: Binning options dictionary used for archiver request
             request_params: Settings dictionary used for archiver request
 
         Returns:
@@ -39,7 +40,7 @@ class Fetcher(object):
                 end = utils.add_local_timezone(end)
         else:
             end = utils.add_local_timezone(datetime.now())
-        return self._get_values(pv, start, end, count, request_params)
+        return self._get_values(pv, start, end, count, binning_params, request_params)
 
     def get_event_at(self, pv, instant, request_params=None):
         """Retrieve the event preceding the specified datetime.
@@ -93,27 +94,40 @@ class AaFetcher(Fetcher):
         assert dt.tzinfo is not None
         return dt.astimezone(pytz.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    def _construct_url(self, pv, start, end, request_params):
+    def _construct_url(self, pv, start, end, binning_params, request_params):
         if request_params is None:
             request_params = {}
+            
+        if binning_params is None:
+            binning_params = {}
+            suffix = '?pv={}&from={}&to={}'.format(
+                pv,
+                self._format_datetime(start),
+                self._format_datetime(end)
+                )
 
-        suffix = '?pv={}&from={}&to={}'.format(
-            pv,
-            self._format_datetime(start),
-            self._format_datetime(end)
-        )
+        else:
+            for key,value in binning_params.items():
+                suffix = '?pv={}_{}({})&from={}&to={}'.format(
+                    key,
+                    value,
+                    pv,
+                    self._format_datetime(start),
+                    self._format_datetime(end)
+                    )
+            
 
         for key, value in request_params.items():
             suffix += "&{}={}".format(key, value)
-
+#http://www.bessy.de/archiver/retrieval/data/getData.json?pv=firstFill_60(U17IT6R:BasePmGap.A)&from=2019-01-31T08:00:00%2B02&to=2019-02-28T12:00:00%2B02')
         return '{}{}'.format(self._url, suffix)
 
-    def _fetch_data(self, pv, start, end, request_params):
-        url = self._construct_url(pv, start, end, request_params)
+    def _fetch_data(self, pv, start, end, binning_params, request_params):
+        url = self._construct_url(pv, start, end, binning_params, request_params)
         return requests.get(url, stream=self._binary)
 
-    def _get_values(self, pv, start, end, count, request_params):
-        response = self._fetch_data(pv, start, end, request_params)
+    def _get_values(self, pv, start, end, count, binning_params, request_params):
+        response = self._fetch_data(pv, start, end, binning_params, request_params)
         response.raise_for_status()
         return self._parse_raw_data(response, pv, start, end, count)
 
